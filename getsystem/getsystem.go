@@ -49,11 +49,18 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 	if err != nil {
 		return err
 	}
-	var dupTokenH *windows.Token
-	err = DuplicateTokenEx(tokenH, windows.TOKEN_ALL_ACCESS, nil, windows.SecurityImpersonation, windows.TokenPrimary, dupTokenH)
-	// err = DuplicateTokenEx(tokenH, TokenDupPerms, nil, windows.SecurityImpersonation, windows.TokenPrimary, dupTokenH)
+	var dupTokenH windows.Token
+	err = windows.DuplicateTokenEx(
+		tokenH,
+		TokenDupPerms,
+		nil,
+		windows.SecurityImpersonation,
+		windows.TokenPrimary,
+		&dupTokenH,
+	)
+
 	if err != nil {
-		return fmt.Errorf("duplicateTokenEx | %s", err.Error())
+		return fmt.Errorf("duplicateTokenEx | %s", err)
 	}
 
 	var show uint16 = windows.SW_NORMAL
@@ -68,18 +75,23 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 
 	pi := &windows.ProcessInformation{}
 
-	flags := flagCreateNewConsole | windows.CREATE_UNICODE_ENVIRONMENT
+	var argvp *uint16
+	argvp, err = windows.UTF16PtrFromString(cmd)
+	if err != nil {
+		return err
+	}
 
+	flags := flagCreateNewConsole | windows.CREATE_UNICODE_ENVIRONMENT
 	r1, _, e1 := procCreateProcessWithTokenW.Call(
-		uintptr(*dupTokenH),           // HANDLE                hToken,
-		0,                             // DWORD                 dwLogonFlags,
-		uintptr(0),                    // LPCWSTR               lpApplicationName,
-		uintptr(unsafe.Pointer(&cmd)), // LPWSTR                lpCommandLine,
-		uintptr(flags),                // DWORD                 dwCreationFlags,
-		uintptr(0),                    // LPVOID                lpEnvironment,
-		uintptr(0),                    // LPCWSTR               lpCurrentDirectory,
-		uintptr(unsafe.Pointer(si)),   // LPSTARTUPINFOW        lpStartupInfo,
-		uintptr(unsafe.Pointer(pi)),   // LPPROCESS_INFORMATION lpProcessInformation
+		uintptr(dupTokenH),             // HANDLE                hToken,
+		0,                              // DWORD                 dwLogonFlags,
+		uintptr(0),                     // LPCWSTR               lpApplicationName,
+		uintptr(unsafe.Pointer(argvp)), // LPWSTR                lpCommandLine,
+		uintptr(flags),                 // DWORD                 dwCreationFlags,
+		uintptr(0),                     // LPVOID                lpEnvironment,
+		uintptr(0),                     // LPCWSTR               lpCurrentDirectory,
+		uintptr(unsafe.Pointer(si)),    // LPSTARTUPINFOW        lpStartupInfo,
+		uintptr(unsafe.Pointer(pi)),    // LPPROCESS_INFORMATION lpProcessInformation
 	)
 	if r1 == 0 {
 		return e1
@@ -92,7 +104,6 @@ func DebugPriv() error {
 }
 
 func SePrivEnable(privString string) (err error) {
-
 	var luid windows.LUID
 	err = windows.LookupPrivilegeValue(nil, windows.StringToUTF16Ptr(privString), &luid)
 	if err != nil {
@@ -118,31 +129,13 @@ func SePrivEnable(privString string) (err error) {
 func tokenForPid(pid int) (tokenH windows.Token, err error) {
 	hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, true, uint32(pid))
 	if err != nil {
+		err = fmt.Errorf("tokenForPid | openProcess | %s", err)
 		return
 	}
 
 	err = windows.OpenProcessToken(hProc, OpenProcTokenPerms, &tokenH)
-	return
-}
-
-func DuplicateTokenEx(
-	hToken windows.Token,
-	perms uint32,
-	tokenAttrs *windows.SecurityAttributes,
-	level uint32,
-	tokenType uint32,
-	hNewToken *windows.Token,
-) (err error) {
-
-	r1, _, e1 := procDuplicateTokenEx.Call(
-		uintptr(hToken),
-		uintptr(perms),
-		uintptr(unsafe.Pointer(tokenAttrs)),
-		uintptr(level),
-		uintptr(tokenType),
-		uintptr(unsafe.Pointer(hNewToken)))
-	if r1 == 0 {
-		err = e1
+	if err != nil {
+		err = fmt.Errorf("tokenForPid | openToken | %s", err)
 	}
 	return
 }
