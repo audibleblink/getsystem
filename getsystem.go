@@ -10,14 +10,18 @@ import (
 var (
 	advapi32                    = windows.NewLazySystemDLL("advapi32.dll")
 	procImpersonateLoggedOnUser = advapi32.NewProc("ImpersonateLoggedOnUser")
-	procDuplicateTokenEx        = advapi32.NewProc("DuplicateTokenEx")
 	procCreateProcessWithTokenW = advapi32.NewProc("CreateProcessWithTokenW")
 )
 
-// TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID | TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY
 const (
-	OpenProcTokenPerms uint32 = windows.TOKEN_READ | windows.TOKEN_DUPLICATE | windows.TOKEN_IMPERSONATE
-	TokenDupPerms      uint32 = windows.TOKEN_QUERY | windows.TOKEN_DUPLICATE | windows.TOKEN_ASSIGN_PRIMARY | windows.TOKEN_ADJUST_DEFAULT | windows.TOKEN_ADJUST_SESSIONID
+	OpenProcTokenPerms uint32 = windows.TOKEN_READ |
+		windows.TOKEN_DUPLICATE |
+		windows.TOKEN_IMPERSONATE
+	TokenDupPerms uint32 = windows.TOKEN_QUERY |
+		windows.TOKEN_DUPLICATE |
+		windows.TOKEN_ASSIGN_PRIMARY |
+		windows.TOKEN_ADJUST_DEFAULT |
+		windows.TOKEN_ADJUST_SESSIONID
 
 	sePrivilegeEnabled   = 0x00000002
 	flagCreateNewConsole = 0x00000010
@@ -34,9 +38,9 @@ func OnThread(pid int) error {
 	}
 	defer tokenH.Close()
 
-	r, _, err := procImpersonateLoggedOnUser.Call(uintptr(tokenH))
-	if r == 0 {
-		return err
+	retCode, _, ntErr := procImpersonateLoggedOnUser.Call(uintptr(tokenH))
+	if retCode == 0 {
+		return ntErr
 	}
 	return nil
 }
@@ -49,6 +53,7 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 	if err != nil {
 		return err
 	}
+
 	var dupTokenH windows.Token
 	err = windows.DuplicateTokenEx(
 		tokenH,
@@ -58,7 +63,6 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 		windows.TokenPrimary,
 		&dupTokenH,
 	)
-
 	if err != nil {
 		return fmt.Errorf("duplicateTokenEx | %s", err)
 	}
@@ -75,34 +79,36 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 
 	pi := &windows.ProcessInformation{}
 
-	var argvp *uint16
-	argvp, err = windows.UTF16PtrFromString(cmd)
+	var cmdP *uint16
+	cmdP, err = windows.UTF16PtrFromString(cmd)
 	if err != nil {
 		return err
 	}
 
 	flags := flagCreateNewConsole | windows.CREATE_UNICODE_ENVIRONMENT
-	r1, _, e1 := procCreateProcessWithTokenW.Call(
-		uintptr(dupTokenH),             // HANDLE                hToken,
-		0,                              // DWORD                 dwLogonFlags,
-		uintptr(0),                     // LPCWSTR               lpApplicationName,
-		uintptr(unsafe.Pointer(argvp)), // LPWSTR                lpCommandLine,
-		uintptr(flags),                 // DWORD                 dwCreationFlags,
-		uintptr(0),                     // LPVOID                lpEnvironment,
-		uintptr(0),                     // LPCWSTR               lpCurrentDirectory,
-		uintptr(unsafe.Pointer(si)),    // LPSTARTUPINFOW        lpStartupInfo,
-		uintptr(unsafe.Pointer(pi)),    // LPPROCESS_INFORMATION lpProcessInformation
+	retCode, _, ntErr := procCreateProcessWithTokenW.Call(
+		uintptr(dupTokenH),            //  hToken,
+		0,                             //  dwLogonFlags,
+		uintptr(0),                    //  lpApplicationName,
+		uintptr(unsafe.Pointer(cmdP)), //  lpCommandLine,
+		uintptr(flags),                //  dwCreationFlags,
+		uintptr(0),                    //  lpEnvironment,
+		uintptr(0),                    //  lpCurrentDirectory,
+		uintptr(unsafe.Pointer(si)),   //  lpStartupInfo,
+		uintptr(unsafe.Pointer(pi)),   //  lpProcessInformation
 	)
-	if r1 == 0 {
-		return e1
+	if retCode == 0 {
+		return ntErr
 	}
 	return nil
 }
 
+// DebugPriv enables the SeDebugPrivilege
 func DebugPriv() error {
 	return SePrivEnable("SeDebugPrivilege")
 }
 
+// SePrivEnable takes a privilege name and enables it
 func SePrivEnable(privString string) (err error) {
 	var luid windows.LUID
 	err = windows.LookupPrivilegeValue(nil, windows.StringToUTF16Ptr(privString), &luid)
@@ -124,6 +130,20 @@ func SePrivEnable(privString string) (err error) {
 		return fmt.Errorf("sePrivEnable | %s", err)
 	}
 	return
+}
+
+// TokenOwner will resolve the primary token or thread owner of the given
+// handle
+func TokenOwner(hToken windows.Token) (string, error) {
+	tokenUser, err := hToken.GetTokenUser()
+	if err != nil {
+		return "", fmt.Errorf("tokenOwner | getTokenUser | %s", err)
+	}
+	u, d, _, err := tokenUser.User.Sid.LookupAccount("")
+	if err != nil {
+		return "", fmt.Errorf("tokenOwner | lookupSID | %s", err)
+	}
+	return fmt.Sprintf(`%s\%s`, d, u), err
 }
 
 func tokenForPid(pid int) (tokenH windows.Token, err error) {
