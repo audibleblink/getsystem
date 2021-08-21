@@ -3,6 +3,8 @@
 small utility for impersonating a user in the current thread or starting a new process
 with a duplicated token.
 
+must already be in a high integrity context.
+
 Example demo in `/cmd/main.go` folder
 
 ## Available functions
