@@ -39,3 +39,7 @@ PS getsystem> go run .\cmd\ 1804
 2021/08/21 11:06:04 Current effective thread owner: DEMOPC\adm-user
 2021/08/21 11:06:04 Starting new process with duplicated token
 ```
+
+## greetz
+
+@slyd0g for [this article](https://posts.specterops.io/understanding-and-defending-against-access-token-theft-finding-alternatives-to-winlogon-exe-80696c8a73b) which was a huge help in understanding the inconsistencies I was seeing when testing this on different SYSTEM processes.

@@ -27,7 +27,7 @@ const (
 	flagCreateNewConsole = 0x00000010
 )
 
-// OnThrea will steal a token from the given process. It can be other users as well
+// OnThread will steal a token from the given process. It can be other users as well
 // not just system. The token will be applied to the current thread until revtoself
 // is called, or the thread exits. Only certain processes can have their SYSTEM token
 // stolen. You have TOKEN_OWNER in the DACL of the SYSTEM process in order to steal it.
