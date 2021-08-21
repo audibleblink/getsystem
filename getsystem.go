@@ -146,6 +146,17 @@ func TokenOwner(hToken windows.Token) (string, error) {
 	return fmt.Sprintf(`%s\%s`, d, u), err
 }
 
+// TokenOwnerFromPid will resolve the primary token or thread owner of the given
+// pid
+func TokenOwnerFromPid(pid int) (string, error) {
+	hToken, err := tokenForPid(pid)
+	if err != nil {
+		return "", err
+	}
+
+	return TokenOwner(hToken)
+}
+
 func tokenForPid(pid int) (tokenH windows.Token, err error) {
 	hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, true, uint32(pid))
 	if err != nil {
