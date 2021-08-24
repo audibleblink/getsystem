@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/audibleblink/getsystem"
+	"github.com/pkg/errors"
 	"golang.org/x/sys/windows"
 )
 
@@ -15,7 +16,8 @@ func main() {
 	log.Print("Enabling seDebug...")
 	err := getsystem.DebugPriv()
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("%v", errors.Cause(err))
+
 	}
 	log.Println("OK")
 
@@ -23,20 +25,29 @@ func main() {
 
 	log.Println("Beginning Token impersonation in current thread")
 
-	getsystem.OnThread(pid)
+	err = getsystem.OnThread(pid)
+	if err != nil {
+		log.Printf("%v", errors.Cause(err))
+
+	}
 
 	printCurrentThreadOwner()
 
 	log.Println("Reverting to previous user")
 
-	windows.RevertToSelf()
+	err = windows.RevertToSelf()
+	if err != nil {
+		log.Printf("%v", errors.Cause(err))
+
+	}
 
 	printCurrentThreadOwner()
 
 	log.Println("Starting new process with duplicated token")
 	err = getsystem.InNewProcess(pid, `c:\windows\system32\cmd.exe`, false)
 	if err != nil {
-		log.Fatal(err)
+		log.Printf("%v", errors.Cause(err))
+
 	}
 }
 

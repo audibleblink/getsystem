@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"unsafe"
 
+	"github.com/pkg/errors"
 	"golang.org/x/sys/windows"
 )
 
@@ -34,13 +35,13 @@ const (
 func OnThread(pid int) error {
 	tokenH, err := tokenForPid(pid)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "token for pid failed")
 	}
 	defer tokenH.Close()
 
 	retCode, _, ntErr := procImpersonateLoggedOnUser.Call(uintptr(tokenH))
 	if retCode == 0 {
-		return ntErr
+		return errors.Wrap(ntErr, "could not impersonte token user")
 	}
 	return nil
 }
@@ -51,7 +52,7 @@ func OnThread(pid int) error {
 func InNewProcess(pid int, cmd string, hidden bool) error {
 	tokenH, err := tokenForPid(pid)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "token for pid failed")
 	}
 
 	var dupTokenH windows.Token
@@ -64,7 +65,7 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 		&dupTokenH,
 	)
 	if err != nil {
-		return fmt.Errorf("duplicateTokenEx | %s", err)
+		return errors.Wrap(err, "token duplication failed")
 	}
 
 	var show uint16 = windows.SW_NORMAL
@@ -82,7 +83,7 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 	var cmdP *uint16
 	cmdP, err = windows.UTF16PtrFromString(cmd)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "failed to convert utf16 string")
 	}
 
 	flags := flagCreateNewConsole | windows.CREATE_UNICODE_ENVIRONMENT
@@ -98,7 +99,7 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 		uintptr(unsafe.Pointer(pi)),   //  lpProcessInformation
 	)
 	if retCode == 0 {
-		return ntErr
+		return errors.Wrap(ntErr, "could not create process with token")
 	}
 	return nil
 }
@@ -113,7 +114,7 @@ func SePrivEnable(privString string) (err error) {
 	var luid windows.LUID
 	err = windows.LookupPrivilegeValue(nil, windows.StringToUTF16Ptr(privString), &luid)
 	if err != nil {
-		return fmt.Errorf("sePrivEnable | %s", err)
+		return errors.Wrap(err, "privilege lookup failed")
 	}
 
 	privs := &windows.Tokenprivileges{}
@@ -122,12 +123,15 @@ func SePrivEnable(privString string) (err error) {
 	privs.Privileges[0].Attributes = uint32(sePrivilegeEnabled)
 
 	var tokenH windows.Token
-	windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES, &tokenH)
+	err = windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES, &tokenH)
+	if err != nil {
+		return errors.Wrap(err, "failed to open process token")
+	}
 	defer tokenH.Close()
 
 	err = windows.AdjustTokenPrivileges(tokenH, false, privs, uint32(unsafe.Sizeof(privs)), nil, nil)
 	if err != nil {
-		return fmt.Errorf("sePrivEnable | %s", err)
+		return errors.Wrap(err, "failed to adjust token privilege")
 	}
 	return
 }
@@ -137,11 +141,11 @@ func SePrivEnable(privString string) (err error) {
 func TokenOwner(hToken windows.Token) (string, error) {
 	tokenUser, err := hToken.GetTokenUser()
 	if err != nil {
-		return "", fmt.Errorf("tokenOwner | getTokenUser | %s", err)
+		return "", errors.Wrap(err, "could not get token user")
 	}
 	u, d, _, err := tokenUser.User.Sid.LookupAccount("")
 	if err != nil {
-		return "", fmt.Errorf("tokenOwner | lookupSID | %s", err)
+		return "", errors.Wrap(err, "could not find SID for user")
 	}
 	return fmt.Sprintf(`%s\%s`, d, u), err
 }
@@ -151,7 +155,7 @@ func TokenOwner(hToken windows.Token) (string, error) {
 func TokenOwnerFromPid(pid int) (string, error) {
 	hToken, err := tokenForPid(pid)
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(err, "failed to get token from pid")
 	}
 
 	return TokenOwner(hToken)
@@ -160,13 +164,13 @@ func TokenOwnerFromPid(pid int) (string, error) {
 func tokenForPid(pid int) (tokenH windows.Token, err error) {
 	hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, true, uint32(pid))
 	if err != nil {
-		err = fmt.Errorf("tokenForPid | openProcess | %s", err)
+		err = errors.Wrap(err, "failed to open process")
 		return
 	}
 
 	err = windows.OpenProcessToken(hProc, OpenProcTokenPerms, &tokenH)
 	if err != nil {
-		err = fmt.Errorf("tokenForPid | openToken | %s", err)
+		err = errors.Wrap(err, "failed to open token")
 	}
 	return
 }
