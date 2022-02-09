@@ -179,10 +179,17 @@ func tokenForPid(pid int, desiredAccess uint32 ) (tokenH windows.Token, err erro
 	return
 }
 
+<<<<<<< HEAD
 // DemoteProcess will remove set SE_PRIVILEGE_REMOVED on all privs for the process LUID
 // It then sets the Token Label to Untrusted
 func DemoteProcess(pid int) (err error) {
 	tokenH, err := tokenForPid(pid, windows.TOKEN_ALL_ACCESS)
+=======
+// NeuterProcess will remove set SE_PRIVILEGE_REMOVED on all privs for the process LUID.
+// It then sets the Token Label to Untrusted
+func NeuterProcess(pid int) (err error) {
+	tokenH, err := tokenForPid(pid)
+>>>>>>> 6a833cb (WIP)
 	if err != nil {
 		return
 	}
@@ -196,6 +203,14 @@ func DemoteProcess(pid int) (err error) {
 	return
 }
 
+<<<<<<< HEAD
+=======
+type attrs struct {
+	tempLuid   int64
+	attributes int32
+}
+
+>>>>>>> 6a833cb (WIP)
 // RemoveTokenPrivileges fetches the privileges of a token and
 // revokes them by applying the SE_PRIVILEGE_REMOVED privilege
 func RemoveTokenPrivileges(tokenH windows.Token) (err error) {
@@ -204,6 +219,7 @@ func RemoveTokenPrivileges(tokenH windows.Token) (err error) {
 		return
 	}
 
+<<<<<<< HEAD
 	var privilegeCount uint32
 	err = binary.Read(tokenInformation, binary.LittleEndian, &privilegeCount)
 	if err != nil {
@@ -223,12 +239,39 @@ func RemoveTokenPrivileges(tokenH windows.Token) (err error) {
 		newTokenPrivs := windows.Tokenprivileges{
 			PrivilegeCount: 1,
 			Privileges: [1]windows.LUIDAndAttributes{ tempLuid },
+=======
+	privilegeCount := binary.LittleEndian.Uint32(tokenInformation[:4])
+	privileges := bytes.NewBuffer(tokenInformation[4:])
+	for i := uint32(0); i < privilegeCount; i++ {
+
+		info := attrs{}
+		err = binary.Read(privileges, binary.LittleEndian, &info)
+		if err != nil {
+			err = errors.Wrap(err, "failed to a patch a priv, continuing")
+			continue
+		}
+
+		var luid = windows.LUID{
+			LowPart:  uint32(info.tempLuid),
+			HighPart: 0,
+		}
+
+		newTokenPrivs := windows.Tokenprivileges{
+			PrivilegeCount: 1,
+			Privileges: [1]windows.LUIDAndAttributes{{
+				Luid:       luid,
+				Attributes: windows.SE_PRIVILEGE_REMOVED,
+			}},
+>>>>>>> 6a833cb (WIP)
 		}
 
 		err = windows.AdjustTokenPrivileges(tokenH, false, &newTokenPrivs, 0, nil, nil)
 		if err != nil {
 			err = errors.Wrap(err, "failed to a patch a priv, continuing")
+<<<<<<< HEAD
 			fmt.Println(err)
+=======
+>>>>>>> 6a833cb (WIP)
 			continue
 		}
 
@@ -252,12 +295,19 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 		return
 	}
 
+<<<<<<< HEAD
 	tml := windows.Tokenmandatorylabel{
 		Label: windows.SIDAndAttributes{
 			Sid:        sid,
 			Attributes: windows.SE_GROUP_INTEGRITY,
 		},
 	}
+=======
+	tml := windows.Tokenmandatorylabel{Label: windows.SIDAndAttributes{
+		Sid:        sid,
+		Attributes: windows.SE_GROUP_INTEGRITY,
+	}}
+>>>>>>> 6a833cb (WIP)
 
 	_, err = setTokenMandatoryLabel(tokenH, windows.TokenIntegrityLevel, tml, tml.Size())
 	if err != nil {
@@ -268,6 +318,7 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 
 }
 
+<<<<<<< HEAD
 func getTokenPrivileges(tokenH windows.Token) (tokenInfo *bytes.Buffer, err error) {
 	var tokenInfoSize uint32
 	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &tokenInfoSize)
@@ -276,6 +327,15 @@ func getTokenPrivileges(tokenH windows.Token) (tokenInfo *bytes.Buffer, err erro
 		tokenH,
 		windows.TokenPrivileges,
 		&tokenInfo.Bytes()[0],
+=======
+func getTokenPrivileges(tokenH windows.Token) (tokenInfo []byte, err error) {
+	var tokenInfoSize uint32
+	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &tokenInfoSize)
+	err = windows.GetTokenInformation(
+		tokenH,
+		windows.TokenPrivileges,
+		&tokenInfo[0],
+>>>>>>> 6a833cb (WIP)
 		tokenInfoSize,
 		&tokenInfoSize,
 	)
