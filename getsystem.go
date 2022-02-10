@@ -213,9 +213,8 @@ func RemoveTokenPrivileges(tokenH windows.Token) (err error) {
 
 		err = windows.AdjustTokenPrivileges(tokenH, false, &newTokenPrivs, 0, nil, nil)
 		if err != nil {
-			err = errors.Wrap(err, "failed to a patch a priv, continuing")
-			fmt.Println(err)
-			continue
+			err = errors.Wrap(err, "failed to a patch privilege")
+			return
 		}
 	}
 	return
