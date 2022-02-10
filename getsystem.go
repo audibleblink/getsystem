@@ -243,9 +243,10 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 		},
 	}
 
-	tmlBytes := bytes.NewBuffer(make([]byte, 0))
-	err = binary.Read(tmlBytes, binary.LittleEndian, tml)
-	err = windows.SetTokenInformation(tokenH, windows.TokenIntegrityLevel, &tmlBytes.Bytes()[0], tml.Size())
+	tmlP := unsafe.Pointer(&tml)
+	tmlByteP := (*byte)(tmlP)
+
+	err = windows.SetTokenInformation(tokenH, windows.TokenIntegrityLevel, tmlByteP, tml.Size())
 	if err != nil {
 		err = errors.Wrap(err, "failed to setTokenMandatoryLabel")
 		return
@@ -257,16 +258,11 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 // Tokenpriveleges struct. An error is returned if the function fails to retrieve the
 // initial token information
 func GetTokenPrivileges(tokenH windows.Token) (tokenPrivileges windows.Tokenprivileges, err error) {
-	var tokenInfoSize uint32
-	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &tokenInfoSize)
-	tokenInfo := bytes.NewBuffer(make([]byte, tokenInfoSize))
-	err = windows.GetTokenInformation(
-		tokenH,
-		windows.TokenPrivileges,
-		&tokenInfo.Bytes()[0],
-		tokenInfoSize,
-		&tokenInfoSize,
-	)
+	tokenP := (*byte)(unsafe.Pointer(&tokenPrivileges))
+	var infoSize uint32
+	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &infoSize)
+	tokenInfo := bytes.NewBuffer(make([]byte, infoSize))
+	err = windows.GetTokenInformation(tokenH, windows.TokenPrivileges, tokenP, infoSize, &infoSize)
 	if err != nil {
 		err = errors.Wrap(err, "failed to retrieve token information")
 		return
