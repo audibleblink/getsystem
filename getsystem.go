@@ -243,7 +243,10 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 		},
 	}
 
-	_, err = setTokenMandatoryLabel(tokenH, windows.TokenIntegrityLevel, tml, tml.Size())
+	tmlP := unsafe.Pointer(&tml)
+	tmlByteP := (*byte)(tmlP)
+
+	err = windows.SetTokenInformation(tokenH, windows.TokenIntegrityLevel, tmlByteP, tml.Size())
 	if err != nil {
 		err = errors.Wrap(err, "failed to setTokenMandatoryLabel")
 		return
@@ -255,41 +258,16 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 // Tokenpriveleges struct. An error is returned if the function fails to retrieve the
 // initial token information
 func GetTokenPrivileges(tokenH windows.Token) (tokenPrivileges windows.Tokenprivileges, err error) {
-	var tokenInfoSize uint32
-	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &tokenInfoSize)
-	tokenInfo := bytes.NewBuffer(make([]byte, tokenInfoSize))
-	err = windows.GetTokenInformation(
-		tokenH,
-		windows.TokenPrivileges,
-		&tokenInfo.Bytes()[0],
-		tokenInfoSize,
-		&tokenInfoSize,
-	)
+	tokenP := (*byte)(unsafe.Pointer(&tokenPrivileges))
+	var infoSize uint32
+	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &infoSize)
+	tokenInfo := bytes.NewBuffer(make([]byte, infoSize))
+	err = windows.GetTokenInformation(tokenH, windows.TokenPrivileges, tokenP, infoSize, &infoSize)
 	if err != nil {
 		err = errors.Wrap(err, "failed to retrieve token information")
 		return
 	}
 
 	err = binary.Read(tokenInfo, binary.LittleEndian, &tokenPrivileges)
-	return
-}
-
-// github.com/tnpitsecurity/nerftoken-go/main.go#L24-L35
-func setTokenMandatoryLabel(
-	tokenH windows.Token,
-	tokenInformationClass uint32,
-	tml windows.Tokenmandatorylabel,
-	tmlLen uint32,
-) (result uintptr, err error) {
-	retCode, _, ntErr := procSetTokenInformation.Call(
-		uintptr(tokenH),
-		uintptr(tokenInformationClass),
-		uintptr(unsafe.Pointer(&tml)),
-		uintptr(tmlLen),
-	)
-	if retCode == 0 {
-		err = errors.Wrap(ntErr, "could not create process with token")
-		return
-	}
 	return
 }
