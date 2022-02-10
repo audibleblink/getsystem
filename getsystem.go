@@ -243,7 +243,9 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 		},
 	}
 
-	_, err = setTokenMandatoryLabel(tokenH, windows.TokenIntegrityLevel, tml, tml.Size())
+	tmlBytes := bytes.NewBuffer(make([]byte, 0))
+	err = binary.Read(tmlBytes, binary.LittleEndian, tml)
+	err = windows.SetTokenInformation(tokenH, windows.TokenIntegrityLevel, &tmlBytes.Bytes()[0], tml.Size())
 	if err != nil {
 		err = errors.Wrap(err, "failed to setTokenMandatoryLabel")
 		return
@@ -271,25 +273,5 @@ func GetTokenPrivileges(tokenH windows.Token) (tokenPrivileges windows.Tokenpriv
 	}
 
 	err = binary.Read(tokenInfo, binary.LittleEndian, &tokenPrivileges)
-	return
-}
-
-// github.com/tnpitsecurity/nerftoken-go/main.go#L24-L35
-func setTokenMandatoryLabel(
-	tokenH windows.Token,
-	tokenInformationClass uint32,
-	tml windows.Tokenmandatorylabel,
-	tmlLen uint32,
-) (result uintptr, err error) {
-	retCode, _, ntErr := procSetTokenInformation.Call(
-		uintptr(tokenH),
-		uintptr(tokenInformationClass),
-		uintptr(unsafe.Pointer(&tml)),
-		uintptr(tmlLen),
-	)
-	if retCode == 0 {
-		err = errors.Wrap(ntErr, "could not create process with token")
-		return
-	}
 	return
 }
