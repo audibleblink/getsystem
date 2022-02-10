@@ -165,7 +165,7 @@ func TokenOwnerFromPid(pid int) (string, error) {
 	return TokenOwner(hToken)
 }
 
-func tokenForPid(pid int, desiredAccess uint32 ) (tokenH windows.Token, err error) {
+func tokenForPid(pid int, desiredAccess uint32) (tokenH windows.Token, err error) {
 	hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, true, uint32(pid))
 	if err != nil {
 		err = errors.Wrap(err, "failed to open process")
@@ -199,39 +199,23 @@ func DemoteProcess(pid int) (err error) {
 // RemoveTokenPrivileges fetches the privileges of a token and
 // revokes them by applying the SE_PRIVILEGE_REMOVED privilege
 func RemoveTokenPrivileges(tokenH windows.Token) (err error) {
-	tokenInformation, err := getTokenPrivileges(tokenH)
+	tokenPrivs, err := GetTokenPrivileges(tokenH)
 	if err != nil {
 		return
 	}
 
-	var privilegeCount uint32
-	err = binary.Read(tokenInformation, binary.LittleEndian, &privilegeCount)
-	if err != nil {
-		return
-	}
-
-	for i := uint32(0); i < privilegeCount; i++ {
-		var tempLuid windows.LUIDAndAttributes
-		err = binary.Read(tokenInformation, binary.LittleEndian, &tempLuid)
-		if err != nil {
-			fmt.Println("Error getting LUID")
-			panic(err)
-		}
-
-		tempLuid.Attributes = windows.SE_PRIVILEGE_REMOVED
-
+	for _, luid := range tokenPrivs.Privileges {
+		luid.Attributes = windows.SE_PRIVILEGE_REMOVED
 		newTokenPrivs := windows.Tokenprivileges{
 			PrivilegeCount: 1,
-			Privileges: [1]windows.LUIDAndAttributes{ tempLuid },
+			Privileges:     [1]windows.LUIDAndAttributes{luid},
 		}
 
 		err = windows.AdjustTokenPrivileges(tokenH, false, &newTokenPrivs, 0, nil, nil)
 		if err != nil {
-			err = errors.Wrap(err, "failed to a patch a priv, continuing")
-			fmt.Println(err)
-			continue
+			err = errors.Wrap(err, "failed to a patch privilege")
+			return
 		}
-
 	}
 	return
 }
@@ -265,13 +249,15 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 		return
 	}
 	return
-
 }
 
-func getTokenPrivileges(tokenH windows.Token) (tokenInfo *bytes.Buffer, err error) {
+// GetTokenPrivileges will retreive token privilege information and parse it to a windows
+// Tokenpriveleges struct. An error is returned if the function fails to retrieve the
+// initial token information
+func GetTokenPrivileges(tokenH windows.Token) (tokenPrivileges windows.Tokenprivileges, err error) {
 	var tokenInfoSize uint32
 	windows.GetTokenInformation(tokenH, windows.TokenPrivileges, nil, 0, &tokenInfoSize)
-	tokenInfo = bytes.NewBuffer(make([]byte, tokenInfoSize))
+	tokenInfo := bytes.NewBuffer(make([]byte, tokenInfoSize))
 	err = windows.GetTokenInformation(
 		tokenH,
 		windows.TokenPrivileges,
@@ -283,6 +269,8 @@ func getTokenPrivileges(tokenH windows.Token) (tokenInfo *bytes.Buffer, err erro
 		err = errors.Wrap(err, "failed to retrieve token information")
 		return
 	}
+
+	err = binary.Read(tokenInfo, binary.LittleEndian, &tokenPrivileges)
 	return
 }
 
