@@ -14,7 +14,6 @@ var (
 	advapi32                    = windows.NewLazySystemDLL("advapi32.dll")
 	procImpersonateLoggedOnUser = advapi32.NewProc("ImpersonateLoggedOnUser")
 	procCreateProcessWithTokenW = advapi32.NewProc("CreateProcessWithTokenW")
-	procSetTokenInformation     = advapi32.NewProc("SetTokenInformation")
 )
 
 const (
@@ -22,9 +21,9 @@ const (
 		windows.TOKEN_DUPLICATE |
 		windows.TOKEN_IMPERSONATE
 	TokenDupPerms uint32 = windows.TOKEN_QUERY |
-		windows.TOKEN_DUPLICATE |
 		windows.TOKEN_ASSIGN_PRIMARY |
 		windows.TOKEN_ADJUST_DEFAULT |
+		windows.TOKEN_DUPLICATE |
 		windows.TOKEN_ADJUST_SESSIONID
 
 	sePrivilegeEnabled   = 0x00000002
@@ -51,8 +50,7 @@ func OnThread(pid int) error {
 }
 
 // InNewProcess will duplicate the token from given PID and start a new process
-// using the winapi's DuplicateTokenEx and StartProccessWithTokenW with the given
-// command
+// using WinAPI's StartProcessWithTokenW with the given command
 func InNewProcess(pid int, cmd string, hidden bool) error {
 	tokenH, err := tokenForPid(pid, OpenProcTokenPerms)
 	if err != nil {
@@ -60,11 +58,11 @@ func InNewProcess(pid int, cmd string, hidden bool) error {
 	}
 
 	var dupTokenH windows.Token
-	err = windows.DuplicateTokenEx(
+	err = NtDuplicateToken(
 		tokenH,
-		TokenDupPerms,
+		windows.ACCESS_MASK(TokenDupPerms),
 		nil,
-		windows.SecurityImpersonation,
+		false,
 		windows.TokenPrimary,
 		&dupTokenH,
 	)
@@ -127,13 +125,13 @@ func SePrivEnable(privString string) (err error) {
 	privs.Privileges[0].Attributes = uint32(sePrivilegeEnabled)
 
 	var tokenH windows.Token
-	err = windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES, &tokenH)
+	err = NtOpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES, &tokenH)
 	if err != nil {
 		return errors.Wrap(err, "failed to open process token")
 	}
 	defer tokenH.Close()
 
-	err = windows.AdjustTokenPrivileges(tokenH, false, privs, uint32(unsafe.Sizeof(privs)), nil, nil)
+	err = NtAdjustPrivilegesToken(tokenH, false, privs, uint32(unsafe.Sizeof(privs)), nil, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to adjust token privilege")
 	}
@@ -166,13 +164,17 @@ func TokenOwnerFromPid(pid int) (string, error) {
 }
 
 func tokenForPid(pid int, desiredAccess uint32) (tokenH windows.Token, err error) {
-	hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, true, uint32(pid))
+	var hProc windows.Handle
+	oa := windows.OBJECT_ATTRIBUTES{}
+	cId := ClientID{UniqueProcess: windows.Handle(pid), UniqueThread: 0}
+	err = NtOpenProcess(&hProc, windows.PROCESS_QUERY_INFORMATION, &oa, &cId)
+	//hProc, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION, true, uint32(pid))
 	if err != nil {
 		err = errors.Wrap(err, "failed to open process")
 		return
 	}
 
-	err = windows.OpenProcessToken(hProc, desiredAccess, &tokenH)
+	err = NtOpenProcessToken(hProc, windows.ACCESS_MASK(desiredAccess), &tokenH)
 	if err != nil {
 		err = errors.Wrap(err, "failed to open token")
 	}
@@ -211,7 +213,7 @@ func RemoveTokenPrivileges(tokenH windows.Token) (err error) {
 			Privileges:     [1]windows.LUIDAndAttributes{luid},
 		}
 
-		err = windows.AdjustTokenPrivileges(tokenH, false, &newTokenPrivs, 0, nil, nil)
+		err = NtAdjustPrivilegesToken(tokenH, false, &newTokenPrivs, 0, nil, nil)
 		if err != nil {
 			err = errors.Wrap(err, "failed to a patch privilege")
 			return
@@ -246,7 +248,7 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 	tmlP := unsafe.Pointer(&tml)
 	tmlByteP := (*byte)(tmlP)
 
-	err = windows.SetTokenInformation(tokenH, windows.TokenIntegrityLevel, tmlByteP, tml.Size())
+	err = NtSetInformationToken(tokenH, windows.TokenIntegrityLevel, tmlByteP, tml.Size())
 	if err != nil {
 		err = errors.Wrap(err, "failed to setTokenMandatoryLabel")
 		return
@@ -254,8 +256,8 @@ func SetTokenLabel(tokenH windows.Token, label string) (err error) {
 	return
 }
 
-// GetTokenPrivileges will retreive token privilege information and parse it to a windows
-// Tokenpriveleges struct. An error is returned if the function fails to retrieve the
+// GetTokenPrivileges will retrieve token privilege information and parse it to a windows
+// Tokenprivileges struct. An error is returned if the function fails to retrieve the
 // initial token information
 func GetTokenPrivileges(tokenH windows.Token) (tokenPrivileges windows.Tokenprivileges, err error) {
 	tokenP := (*byte)(unsafe.Pointer(&tokenPrivileges))

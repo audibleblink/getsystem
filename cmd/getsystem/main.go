@@ -46,7 +46,7 @@ func main() {
 	log.Println("Starting new process with duplicated token")
 	err = getsystem.InNewProcess(pid, `c:\windows\system32\cmd.exe`, false)
 	if err != nil {
-		log.Printf("%v", errors.Cause(err))
+		log.Printf("%v", errors.WithStack(err))
 
 	}
 }
